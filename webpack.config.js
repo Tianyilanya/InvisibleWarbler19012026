@@ -41,6 +41,14 @@ module.exports = {
         publicPath: '/',
       },
       {
+        directory: path.join(__dirname, 'src'),
+        publicPath: '/src/',
+      },
+      {
+        directory: path.join(__dirname, 'node_modules'),
+        publicPath: '/node_modules/',
+      },
+      {
         directory: path.join(__dirname, 'three.js-dev'),
         publicPath: '/three.js-dev/',
       },

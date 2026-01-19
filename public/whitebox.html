@@ -80,16 +80,16 @@
     <script type="importmap">
     {
         "imports": {
-            "three": "../three.js-dev/build/three.module.js",
-            "three/addons/": "../three.js-dev/examples/jsm/"
+            "three": "../node_modules/three/build/three.module.js",
+            "three/addons/": "../node_modules/three/examples/jsm/"
         }
     }
     </script>
 
     <script type="module">
         import * as THREE from 'three';
-        import { OrbitControls } from './src/controls/OrbitControls.js';
-        import { GLTFLoader } from './src/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { MeshoptDecoder } from './src/loaders/meshopt_decoder.module.js';
         import { HDRLoader } from './src/loaders/HDRLoader.js';
 
