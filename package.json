@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "node --max-old-space-size=4096 node_modules/.bin/webpack --mode production",
-    "build:analyze": "node --max-old-space-size=4096 node_modules/.bin/webpack --mode production --analyze",
+    "build": "node --max-old-space-size=4096 ./node_modules/webpack/bin/webpack.js --mode production",
+    "build:analyze": "node --max-old-space-size=4096 ./node_modules/webpack/bin/webpack.js --mode production --analyze",
     "dev": "webpack serve --mode development --open"
   },
   "dependencies": {
