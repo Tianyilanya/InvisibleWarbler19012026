@@ -65,6 +65,21 @@ const cameraFocusState = {
 	original: null
 };
 
+// 观察模式状态
+const observationMode = {
+	active: false,
+	targetBird: null,
+	followDistance: 8,
+	followHeight: 3,
+	smoothFactor: 0.02,
+	rightMouseDown: false,
+	lastRightMousePos: { x: 0, y: 0 }
+};
+
+// 双击检测
+let lastClickTime = 0;
+const DOUBLE_CLICK_DELAY = 300; // 300ms内的两次点击算双击
+
 // 胶卷UI元素
 let filmRollElement;
 
@@ -290,10 +305,50 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 	// 创建控制面板
 	createControlPanel();
 
-	// 添加键盘快捷键监听器（按键1切换控制面板显示/隐藏）
+	// 添加键盘快捷键监听器
 	window.addEventListener('keydown', (event) => {
 		if (event.key === '1') {
 			toggleControlPanel();
+		}
+		// Q键进入/退出观察模式
+		if (event.key.toLowerCase() === 'q') {
+			event.preventDefault();
+			if (observationMode.active) {
+				exitObservationMode();
+			} else {
+				enterObservationMode();
+			}
+		}
+	});
+
+	// 添加鼠标事件监听器（右键拖拽退出观察模式）
+	window.addEventListener('mousedown', (event) => {
+		if (event.button === 2) { // 右键
+			observationMode.rightMouseDown = true;
+			observationMode.lastRightMousePos = { x: event.clientX, y: event.clientY };
+		}
+	});
+
+	window.addEventListener('mousemove', (event) => {
+		if (observationMode.active && observationMode.rightMouseDown) {
+			const deltaX = Math.abs(event.clientX - observationMode.lastRightMousePos.x);
+			const deltaY = Math.abs(event.clientY - observationMode.lastRightMousePos.y);
+			if (deltaX > 10 || deltaY > 10) { // 移动超过10像素
+				exitObservationMode();
+			}
+		}
+	});
+
+	window.addEventListener('mouseup', (event) => {
+		if (event.button === 2) { // 右键
+			observationMode.rightMouseDown = false;
+		}
+	});
+
+	// 阻止右键菜单
+	window.addEventListener('contextmenu', (event) => {
+		if (observationMode.active) {
+			event.preventDefault();
 		}
 	});
 
@@ -1637,6 +1692,18 @@ function onPointerDown(event) {
 	// 阻止OrbitControls的默认行为
     event.preventDefault();
 
+	// 双击检测
+	const currentTime = Date.now();
+	const timeDiff = currentTime - lastClickTime;
+
+	if (timeDiff < DOUBLE_CLICK_DELAY) {
+		// 双击检测成功，检查是否点击了鸟类
+		handleDoubleClick(event);
+		return;
+	}
+
+	lastClickTime = currentTime;
+
 	// 获取鼠标位置（标准化设备坐标）
 	const rect = renderer.domElement.getBoundingClientRect();
 	const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -1673,6 +1740,47 @@ const raycaster = new THREE.Raycaster();
 		createProgressRing(event.clientX, event.clientY);
 		// 开始相机聚焦（与读条时长同步）
 		startCameraFocus(selectedBird, SELECTION_REQUIRED_TIME);
+	}
+}
+
+// 双击处理函数
+function handleDoubleClick(event) {
+	// 获取鼠标位置（标准化设备坐标）
+	const rect = renderer.domElement.getBoundingClientRect();
+	const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+	const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+	// 射线检测
+	const raycaster = new THREE.Raycaster();
+	raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+
+	// 检测场景中的对象（只检测鸟类组合体）
+	const birdObjects = [];
+	flyingBirds.forEach(bird => {
+		if (bird && bird.alive && bird.mesh) {
+			birdObjects.push(bird.mesh);
+		}
+	});
+
+	const intersects = raycaster.intersectObjects(birdObjects, true);
+
+	if (intersects.length > 0) {
+		// 找到点击的鸟类
+		let clickedBird = null;
+		for (const bird of flyingBirds) {
+			if (bird && bird.alive && bird.mesh) {
+				// 检查是否点击了这个鸟类的任何部件
+				const birdIntersects = raycaster.intersectObject(bird.mesh, true);
+				if (birdIntersects.length > 0) {
+					clickedBird = bird;
+					break;
+				}
+			}
+		}
+
+		if (clickedBird) {
+			enterObservationMode(clickedBird);
+		}
 	}
 }
 
@@ -3967,6 +4075,107 @@ function finalizeCameraFocus() {
 	cameraFocusState.active = false;
 }
 
+// 观察模式函数
+function enterObservationMode(targetBird = null) {
+	if (observationMode.active) return;
+
+	// 如果没有指定目标鸟类，寻找最近的活动鸟类
+	if (!targetBird) {
+		const activeBirds = flyingBirds.filter(bird => bird && bird.alive && bird.mesh);
+		if (activeBirds.length === 0) return;
+
+		// 选择最近的鸟类
+		let closestBird = null;
+		let closestDistance = Infinity;
+
+		activeBirds.forEach(bird => {
+			const distance = camera.position.distanceTo(bird.mesh.position);
+			if (distance < closestDistance) {
+				closestDistance = distance;
+				closestBird = bird;
+			}
+		});
+
+		targetBird = closestBird;
+		if (!targetBird) return;
+	}
+
+	observationMode.active = true;
+	observationMode.targetBird = targetBird;
+
+	// 禁用OrbitControls
+	if (controls) {
+		controls.enabled = false;
+	}
+
+	console.log('🎯 进入观察模式，跟踪鸟类');
+	showToast('进入观察模式 - 按Q或右键拖拽退出');
+}
+
+function exitObservationMode() {
+	if (!observationMode.active) return;
+
+	observationMode.active = false;
+	observationMode.targetBird = null;
+
+	// 重新启用OrbitControls
+	if (controls) {
+		controls.enabled = true;
+	}
+
+	console.log('👁️ 退出观察模式');
+	showToast('退出观察模式');
+}
+
+function updateObservationMode() {
+	if (!observationMode.active || !observationMode.targetBird) return;
+
+	const bird = observationMode.targetBird;
+
+	// 检查鸟类是否还活着
+	if (!bird.alive || !bird.mesh) {
+		// 自动切换到其他鸟类
+		const activeBirds = flyingBirds.filter(b => b && b.alive && b.mesh && b !== bird);
+		if (activeBirds.length > 0) {
+			observationMode.targetBird = activeBirds[Math.floor(Math.random() * activeBirds.length)];
+			console.log('🔄 自动切换到另一只鸟类');
+			showToast('切换到下一只鸟类');
+		} else {
+			exitObservationMode();
+			showToast('没有更多鸟类，退出观察模式');
+			return;
+		}
+	}
+
+	// 计算理想相机位置（鸟类后方偏上）
+	const birdPosition = bird.mesh.position.clone();
+	const birdDirection = bird.velocity.clone().normalize();
+
+	// 如果鸟类静止，使用默认方向
+	if (birdDirection.lengthSq() < 0.01) {
+		birdDirection.set(0, 0, 1);
+	}
+
+	// 计算相机位置（鸟类后方followDistance距离，高度followHeight）
+	const cameraOffset = birdDirection.clone().multiplyScalar(-observationMode.followDistance);
+	cameraOffset.y += observationMode.followHeight;
+
+	const targetCameraPos = birdPosition.clone().add(cameraOffset);
+
+	// 平滑移动相机
+	camera.position.lerp(targetCameraPos, observationMode.smoothFactor);
+
+	// 让相机朝向鸟类
+	const lookAtPos = birdPosition.clone();
+	lookAtPos.y += 0.5; // 稍微向上看
+	camera.lookAt(lookAtPos);
+
+	// 更新OrbitControls的target（如果以后需要恢复）
+	if (controls) {
+		controls.target.copy(lookAtPos);
+	}
+}
+
 // 重置预览组装
 function resetPreviewAssembly() {
 	// 清理场景中的预览组
@@ -5046,8 +5255,11 @@ function animate() {
 	// 更新飞行鸟类的位置和动画
 	updateFlyingBirds();
 
-	// 只有在controls初始化后才更新
-	if (controls) {
+	// 更新观察模式
+	updateObservationMode();
+
+	// 只有在controls初始化后才更新（观察模式下不更新controls）
+	if (controls && !observationMode.active) {
 		controls.update();
 	}
 	render();
