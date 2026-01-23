@@ -30,10 +30,10 @@ Users act as "observers" in an abstract forest scene, experiencing a bird ecosys
 If the batch file doesn't work properly, you can start manually:
 ```bash
 # Install dependencies (first run only)
-npm install
+npm run build
 
 # Start development server
-npm start
+npm run dev
 ```
 Then manually visit http://localhost:8080 in your browser
 
