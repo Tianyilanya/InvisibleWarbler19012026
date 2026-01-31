@@ -35,6 +35,9 @@ let lastBirdGenerationTime = 0; // 上次生成鸟类的时间
 const BIRD_GENERATION_INTERVAL = 5000; // 5秒生成间隔
 const MAX_FLYING_BIRDS = 5; // 最大飞行鸟类数量
 
+// 时钟用于动画
+const clock = new THREE.Clock();
+
 // 鼠标选择相关变量
 let selectionState = {
 	isSelecting: false,
@@ -76,6 +79,17 @@ const observationMode = {
 	lastRightMousePos: { x: 0, y: 0 }
 };
 
+// Exhibit模式状态
+const exhibitMode = {
+	active: false,
+	targetBird: null,
+	lastTargetSwitchTime: 0,
+	targetSwitchInterval: 20000, // 20秒切换
+	orbitAngle: 0,
+	orbitSpeed: 0.02, // 弧度/秒 - 更慢速转动
+	lookAtOffset: new THREE.Vector3(0, 0, 0)
+};
+
 // 双击检测
 let lastClickTime = 0;
 const DOUBLE_CLICK_DELAY = 300; // 300ms内的两次点击算双击
@@ -103,7 +117,7 @@ window.previewLayoutParams = window.debugParams;
 // 全局调试参数（提前初始化）
 window.debugParams = {
 	maxSpeed: 200.0,
-	maxForce: 3.5,
+	maxForce: 1.1,
 	arrivalRadius: 50.0,
 	wanderStrength: 50.0,
 	avoidRadius: 3.0,
@@ -319,6 +333,10 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 				enterObservationMode();
 			}
 		}
+		// E键进入/退出Exhibit模式
+		if (event.key.toLowerCase() === 'e') {
+			toggleExhibitMode();
+		}
 	});
 
 	// 添加鼠标事件监听器（右键拖拽退出观察模式）
@@ -393,8 +411,8 @@ function createControlPanel() {
 		<label>Max Speed: <span id="maxSpeedValue">200.0</span></label><br>
 		<input type="range" id="maxSpeedSlider" min="0.1" max="500" step="1" value="200.0"><br><br>
 
-		<label>Max Force: <span id="maxForceValue">3.5</span></label><br>
-		<input type="range" id="maxForceSlider" min="0.1" max="20" step="0.1" value="3.5"><br><br>
+		<label>Max Force: <span id="maxForceValue">1.1</span></label><br>
+		<input type="range" id="maxForceSlider" min="0.1" max="20" step="0.1" value="1.1"><br><br>
 
 		<label>Arrival Radius: <span id="arrivalRadiusValue">50.0</span></label><br>
 		<input type="range" id="arrivalRadiusSlider" min="0.1" max="100" step="1" value="50.0"><br><br>
@@ -1757,7 +1775,7 @@ function handleDoubleClick(event) {
 	// 检测场景中的对象（只检测鸟类组合体）
 	const birdObjects = [];
 	flyingBirds.forEach(bird => {
-		if (bird && bird.alive && bird.mesh) {
+		if (bird && bird.isAlive && bird.mesh) {
 			birdObjects.push(bird.mesh);
 		}
 	});
@@ -1768,7 +1786,7 @@ function handleDoubleClick(event) {
 		// 找到点击的鸟类
 		let clickedBird = null;
 		for (const bird of flyingBirds) {
-			if (bird && bird.alive && bird.mesh) {
+			if (bird && bird.isAlive && bird.mesh) {
 				// 检查是否点击了这个鸟类的任何部件
 				const birdIntersects = raycaster.intersectObject(bird.mesh, true);
 				if (birdIntersects.length > 0) {
@@ -2173,6 +2191,48 @@ function showToast(message) {
 			}
 		}, 300);
 	}, 2000);
+}
+
+// Exhibit模式UI控制
+function hideExhibitModeUI() {
+	// 隐藏胶卷UI
+	if (filmRollElement) {
+		filmRollElement.style.opacity = '0';
+		filmRollElement.style.transition = 'opacity 0.5s';
+	}
+
+	// 隐藏音量控制UI
+	const volumeControl = document.getElementById('volume-control-ui');
+	if (volumeControl) {
+		volumeControl.style.opacity = '0';
+		volumeControl.style.transition = 'opacity 0.5s';
+	}
+
+	// 隐藏其他UI元素
+	const uiElements = document.querySelectorAll('[class*="ui"], #ui, .ui');
+	uiElements.forEach(el => {
+		el.style.opacity = '0';
+		el.style.transition = 'opacity 0.5s';
+	});
+}
+
+function showExhibitModeUI() {
+	// 显示胶卷UI
+	if (filmRollElement) {
+		filmRollElement.style.opacity = '1';
+	}
+
+	// 显示音量控制UI
+	const volumeControl = document.getElementById('volume-control-ui');
+	if (volumeControl) {
+		volumeControl.style.opacity = '1';
+	}
+
+	// 显示其他UI元素
+	const uiElements = document.querySelectorAll('[class*="ui"], #ui, .ui');
+	uiElements.forEach(el => {
+		el.style.opacity = '1';
+	});
 }
 
 // 清空所有捕获
@@ -4081,7 +4141,7 @@ function enterObservationMode(targetBird = null) {
 
 	// 如果没有指定目标鸟类，寻找最近的活动鸟类
 	if (!targetBird) {
-		const activeBirds = flyingBirds.filter(bird => bird && bird.alive && bird.mesh);
+		const activeBirds = flyingBirds.filter(bird => bird && bird.isAlive && bird.mesh);
 		if (activeBirds.length === 0) return;
 
 		// 选择最近的鸟类
@@ -4127,15 +4187,60 @@ function exitObservationMode() {
 	showToast('退出观察模式');
 }
 
+// Exhibit模式切换
+function toggleExhibitMode() {
+	if (exhibitMode.active) {
+		exitExhibitMode();
+	} else {
+		enterExhibitMode();
+	}
+}
+
+function enterExhibitMode() {
+	exhibitMode.active = true;
+	exhibitMode.lastTargetSwitchTime = Date.now();
+	exhibitMode.orbitAngle = 0;
+
+	// 禁用OrbitControls
+	if (controls) {
+		controls.enabled = false;
+	}
+
+	// 隐藏UI元素
+	hideExhibitModeUI();
+
+	// 选择初始目标
+	selectExhibitTarget();
+
+	console.log('🎬 进入Exhibit模式');
+	showToast('Exhibit模式 - 按E退出');
+}
+
+function exitExhibitMode() {
+	exhibitMode.active = false;
+	exhibitMode.targetBird = null;
+
+	// 重新启用OrbitControls
+	if (controls) {
+		controls.enabled = true;
+	}
+
+	// 显示UI元素
+	showExhibitModeUI();
+
+	console.log('🎬 退出Exhibit模式');
+	showToast('退出Exhibit模式');
+}
+
 function updateObservationMode() {
 	if (!observationMode.active || !observationMode.targetBird) return;
 
 	const bird = observationMode.targetBird;
 
 	// 检查鸟类是否还活着
-	if (!bird.alive || !bird.mesh) {
+	if (!bird.isAlive || !bird.mesh) {
 		// 自动切换到其他鸟类
-		const activeBirds = flyingBirds.filter(b => b && b.alive && b.mesh && b !== bird);
+		const activeBirds = flyingBirds.filter(b => b && b.isAlive && b.mesh && b !== bird);
 		if (activeBirds.length > 0) {
 			observationMode.targetBird = activeBirds[Math.floor(Math.random() * activeBirds.length)];
 			console.log('🔄 自动切换到另一只鸟类');
@@ -4174,6 +4279,109 @@ function updateObservationMode() {
 	if (controls) {
 		controls.target.copy(lookAtPos);
 	}
+}
+
+// Exhibit模式目标选择
+function selectExhibitTarget() {
+	// 如果当前有目标且还在活跃中，保持目标不变
+	if (exhibitMode.targetBird && exhibitMode.targetBird.isAlive) {
+		return true;
+	}
+
+	// 当前目标为空或已死亡，选择新目标
+	const activeBirds = flyingBirds.filter(b => b && b.isAlive && b.mesh);
+
+	if (activeBirds.length === 0) {
+		exhibitMode.targetBird = null;
+		return false;
+	}
+
+	// 随机选择一个活跃的鸟类（不再优先最新生成的）
+	switchToRandomBird(activeBirds);
+	
+	return exhibitMode.targetBird !== null;
+}
+
+function switchToRandomBird(activeBirds) {
+	// 随机选择一只鸟，而不是优先最新的
+	const randomIndex = Math.floor(Math.random() * activeBirds.length);
+	exhibitMode.targetBird = activeBirds[randomIndex] || null;
+	exhibitMode.lastTargetSwitchTime = Date.now();
+	exhibitMode.orbitAngle = 0; // 重置旋转角度
+	
+	if (exhibitMode.targetBird?.userData?.seed) {
+		console.log('🎬 Exhibit锁定目标:', exhibitMode.targetBird.userData.seed);
+	} else {
+		console.log('🎬 Exhibit选择新目标');
+	}
+}
+
+// Exhibit模式相机移动
+function updateExhibitModeCamera(deltaTime) {
+	// 调试：检查exhibitMode状态
+	if (!exhibitMode.active) {
+		return;
+	}
+	
+	if (!exhibitMode.targetBird) {
+		// 尝试自动选择目标
+		selectExhibitTarget();
+		const activeCount = flyingBirds.filter(b => b && b.isAlive && b.mesh).length;
+		console.log('Exhibit: 无目标，尝试选择，活跃鸟类数:', activeCount);
+		return;
+	}
+
+	const bird = exhibitMode.targetBird;
+
+	// 检查鸟类是否还活着
+	if (!bird.isAlive || !bird.mesh) {
+		console.log('Exhibit: 目标已死亡，切换目标');
+		selectExhibitTarget();
+		return;
+	}
+
+	// 检查是否是刚切换的目标（需要直接定位）
+	const timeSinceSwitch = Date.now() - exhibitMode.lastTargetSwitchTime;
+	const isNewTarget = timeSinceSwitch < 500; // 切换后500ms内直接定位
+
+	// 计算电影感相机位置
+	exhibitMode.orbitAngle += exhibitMode.orbitSpeed * deltaTime;
+
+	const birdPos = bird.mesh.position.clone();
+
+	// 固定在鸟类侧后方45度角的最佳观察位置
+	// 使用固定角度，避免大幅度的上下左右移动
+	const fixedAngle = exhibitMode.orbitAngle * 0.5; // 角度变化乘以0.5系数
+
+	// 距离3-4.5米浮动，高度1.5-2.3米浮动
+	const distanceVariation = 0.75; // ±0.75米浮动
+	const orbitRadius = 3.75 + Math.sin(exhibitMode.orbitAngle * 0.5) * distanceVariation; // 3-4.5米浮动
+	const heightBase = 1.9; // 基础高度
+	const heightVariation = 0.4; // ±0.4米浮动
+
+	// 计算目标位置（侧后方45度）
+	const targetCameraPos = new THREE.Vector3(
+		birdPos.x + Math.cos(fixedAngle) * orbitRadius,
+		birdPos.y + heightBase + Math.sin(exhibitMode.orbitAngle * 0.3) * heightVariation, // 1.5-2.3米浮动
+		birdPos.z + Math.sin(fixedAngle) * orbitRadius
+	);
+
+	// 根据是否是新目标选择不同的移动方式
+	if (isNewTarget) {
+		// 切换目标时直接定位，无过渡
+		camera.position.copy(targetCameraPos);
+	} else {
+		// 正常跟随时使用平滑移动
+		camera.position.lerp(targetCameraPos, 0.011);
+	}
+
+	// 相机看向鸟类前方一点的位置，保持构图舒适
+	const lookAtPos = new THREE.Vector3(
+		birdPos.x + Math.sin(fixedAngle) * 0.8,
+		birdPos.y + 0.3, // 稍微看向鸟类的中心偏上
+		birdPos.z + Math.cos(fixedAngle) * 0.8
+	);
+	camera.lookAt(lookAtPos);
 }
 
 // 重置预览组装
@@ -4459,9 +4667,9 @@ class FlyingBird {
 	 * 按性格初始化运动参数
 	 */
 	initializeMovementParams() {
-		// 基础参数（会被性格调整）
+		// 基础参数（从debugParams获取）
 		let baseMaxSpeed = 5.0;
-		let baseMaxForce = 0.02;
+		let baseMaxForce = debugParams.maxForce || 1.1;
 
 		// 按性格调整参数
 		switch (this.personality) {
@@ -5249,17 +5457,27 @@ animate();
 function animate() {
 	requestAnimationFrame(animate);
 
+	// 获取帧间隔
+	const deltaTime = clock.getDelta();
+
 	// 生成新的飞行鸟类
 	generateFlyingBirds();
 
 	// 更新飞行鸟类的位置和动画
 	updateFlyingBirds();
 
-	// 更新观察模式
-	updateObservationMode();
+	// 更新Exhibit模式
+	if (exhibitMode.active) {
+		updateExhibitModeCamera(deltaTime);
+	}
 
-	// 只有在controls初始化后才更新（观察模式下不更新controls）
-	if (controls && !observationMode.active) {
+	// 更新观察模式（只在非Exhibit模式下）
+	if (!exhibitMode.active) {
+		updateObservationMode();
+	}
+
+	// 更新OrbitControls（只在非Exhibit和非观察模式下）
+	if (controls && !observationMode.active && !exhibitMode.active) {
 		controls.update();
 	}
 	render();
